@@ -11,13 +11,22 @@ import { Progress } from "@/components/ui/progress";
 import { getTemperatureColor, getTemperatureLabel, getScoreColor, getStatusLabel, getStatusColor } from "@/lib/scoring";
 import { timeAgo } from "@/lib/utils";
 import { Lead } from "@/lib/types";
-import { Search, MapPin, Globe, AtSign, Mail, Phone, ArrowRight, Flame, Thermometer, Snowflake } from "lucide-react";
+import { Search, MapPin, Globe, AtSign, Mail, Phone, ArrowRight, Flame, Thermometer, Snowflake, Trash2, CheckSquare, Square, Tag } from "lucide-react";
 
 const tabs = [
   { key: "", label: "Todos", icon: null },
   { key: "hot", label: "Quentes", icon: Flame },
   { key: "warm", label: "Mornos", icon: Thermometer },
   { key: "cold", label: "Frios", icon: Snowflake },
+];
+
+const statusOptions = [
+  { value: "new", label: "Novo" },
+  { value: "contacted", label: "Contatado" },
+  { value: "qualified", label: "Qualificado" },
+  { value: "proposal", label: "Proposta" },
+  { value: "closed_won", label: "Fechado" },
+  { value: "archived", label: "Arquivado" },
 ];
 
 export function LeadsContent() {
@@ -28,6 +37,8 @@ export function LeadsContent() {
   const [filterNiche, setFilterNiche] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [sortBy, setSortBy] = useState("score");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -46,6 +57,9 @@ export function LeadsContent() {
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
+  // Reset selection when leads change
+  useEffect(() => { setSelected(new Set()); }, [leads]);
+
   const sorted = [...leads].sort((a, b) => {
     if (sortBy === "score") return b.score - a.score;
     if (sortBy === "name") return a.name.localeCompare(b.name);
@@ -58,7 +72,66 @@ export function LeadsContent() {
   });
 
   const niches = [...new Set(leads.map((l) => l.niche).filter(Boolean))];
-  const counts = { all: leads.length, hot: leads.filter((l) => l.temperature === "hot").length, warm: leads.filter((l) => l.temperature === "warm").length, cold: leads.filter((l) => l.temperature === "cold").length };
+  const counts = {
+    all: leads.length,
+    hot: leads.filter((l) => l.temperature === "hot").length,
+    warm: leads.filter((l) => l.temperature === "warm").length,
+    cold: leads.filter((l) => l.temperature === "cold").length,
+  };
+
+  const allSelected = sorted.length > 0 && sorted.every((l) => selected.has(l.id));
+  const someSelected = selected.size > 0;
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(sorted.map((l) => l.id)));
+    }
+  };
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const bulkDelete = async () => {
+    if (!confirm(`Excluir ${selected.size} lead(s) selecionado(s)? Esta ação não pode ser desfeita.`)) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(
+        [...selected].map((id) => fetch(`/api/leads/${id}`, { method: "DELETE" }))
+      );
+      setSelected(new Set());
+      fetchLeads();
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const bulkUpdateStatus = async (status: string) => {
+    setBulkLoading(true);
+    try {
+      await Promise.all(
+        [...selected].map((id) =>
+          fetch(`/api/leads/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status }),
+          })
+        )
+      );
+      setSelected(new Set());
+      fetchLeads();
+    } finally {
+      setBulkLoading(false);
+    }
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -89,10 +162,7 @@ export function LeadsContent() {
         </Select>
         <Select className="w-32" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
           <option value="">Qualquer status</option>
-          <option value="new">Novo</option>
-          <option value="contacted">Contatado</option>
-          <option value="qualified">Qualificado</option>
-          <option value="proposal">Proposta</option>
+          {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </Select>
         <Select className="w-32" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
           <option value="score">↓ Score</option>
@@ -101,6 +171,50 @@ export function LeadsContent() {
         </Select>
         <span className="text-xs text-slate-400 ml-auto">{sorted.length} leads</span>
       </div>
+
+      {/* Bulk action bar */}
+      {someSelected && (
+        <div className="flex items-center gap-3 rounded-xl bg-slate-900 px-4 py-3">
+          <span className="text-sm font-medium text-white">
+            {selected.size} selecionado{selected.size > 1 ? "s" : ""}
+          </span>
+          <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-1.5">
+              <Tag size={13} className="text-slate-400" />
+              <select
+                className="bg-slate-800 text-white text-xs rounded-lg px-2 py-1.5 border border-slate-700 focus:outline-none"
+                defaultValue=""
+                onChange={(e) => { if (e.target.value) bulkUpdateStatus(e.target.value); }}
+                disabled={bulkLoading}
+              >
+                <option value="" disabled>Mudar status...</option>
+                {statusOptions.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+            <Button
+              size="sm"
+              className="bg-red-600 hover:bg-red-500 text-white gap-1.5 text-xs"
+              onClick={bulkDelete}
+              disabled={bulkLoading}
+            >
+              {bulkLoading
+                ? <div className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" />
+                : <Trash2 size={13} />}
+              Excluir {selected.size}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-slate-400 hover:text-white text-xs"
+              onClick={() => setSelected(new Set())}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
@@ -125,54 +239,82 @@ export function LeadsContent() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {sorted.map((lead) => (
-            <Link key={lead.id} href={`/leads/${lead.id}`}>
-              <Card className="hover:border-blue-200 hover:shadow-sm transition-all cursor-pointer group">
-                <CardContent className="pt-3 pb-3">
-                  <div className="flex items-center gap-4">
-                    <div className="flex flex-col items-center w-14 shrink-0">
-                      <div className={`text-2xl font-bold ${getScoreColor(lead.score)}`}>{lead.score}</div>
-                      <Progress value={lead.score} className="w-12 mt-1" />
-                      <div className="text-[10px] text-slate-400 mt-0.5">score</div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                        <span className="font-semibold text-slate-900">{lead.name}</span>
-                        <Badge variant="outline" className="text-[10px]">{lead.niche}</Badge>
-                        {lead.subniche && <Badge variant="secondary" className="text-[10px]">{lead.subniche}</Badge>}
-                        <span className={`inline-flex items-center rounded-full px-2 py-0 text-[10px] font-medium border ${getTemperatureColor(lead.temperature)}`}>
-                          {getTemperatureLabel(lead.temperature)}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-2">
-                        <span className="flex items-center gap-1"><MapPin size={10} />{lead.city}, {lead.state}</span>
-                        {lead.website && <span className="flex items-center gap-1 text-blue-500"><Globe size={10} />Site</span>}
-                        {lead.instagram && <span className="flex items-center gap-1 text-pink-500"><AtSign size={10} />{lead.instagram}</span>}
-                        {lead.email && <span className="flex items-center gap-1"><Mail size={10} />{lead.email}</span>}
-                        {lead.phone && <span className="flex items-center gap-1"><Phone size={10} />{lead.phone}</span>}
-                      </div>
-                      {lead.opportunity && <p className="text-xs text-slate-500 line-clamp-1">{lead.opportunity}</p>}
-                      {lead.termsFound && lead.termsFound.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {lead.termsFound.slice(0, 4).map((t) => (
-                            <span key={t} className="inline-flex items-center rounded-full bg-green-50 border border-green-100 px-1.5 py-0 text-[10px] text-green-700">{t}</span>
-                          ))}
+          {/* Select all row */}
+          <div className="flex items-center gap-3 px-1 pb-1">
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-800 transition-colors"
+            >
+              {allSelected
+                ? <CheckSquare size={15} className="text-blue-600" />
+                : <Square size={15} className="text-slate-300" />}
+              {allSelected ? "Desmarcar todos" : "Selecionar todos"}
+            </button>
+          </div>
+
+          {sorted.map((lead) => {
+            const isSelected = selected.has(lead.id);
+            return (
+              <div key={lead.id} className="relative flex items-start gap-2">
+                {/* Checkbox */}
+                <button
+                  onClick={(e) => toggleSelect(lead.id, e)}
+                  className="mt-4 shrink-0 z-10"
+                >
+                  {isSelected
+                    ? <CheckSquare size={16} className="text-blue-600" />
+                    : <Square size={16} className="text-slate-300 hover:text-slate-500 transition-colors" />}
+                </button>
+
+                <Link href={`/leads/${lead.id}`} className="flex-1 min-w-0">
+                  <Card className={`hover:border-blue-200 hover:shadow-sm transition-all cursor-pointer group ${isSelected ? "border-blue-300 bg-blue-50/30" : ""}`}>
+                    <CardContent className="pt-3 pb-3">
+                      <div className="flex items-center gap-4">
+                        <div className="flex flex-col items-center w-14 shrink-0">
+                          <div className={`text-2xl font-bold ${getScoreColor(lead.score)}`}>{lead.score}</div>
+                          <Progress value={lead.score} className="w-12 mt-1" />
+                          <div className="text-[10px] text-slate-400 mt-0.5">score</div>
                         </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-2 shrink-0">
-                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium ${getStatusColor(lead.status)}`}>
-                        {getStatusLabel(lead.status)}
-                      </span>
-                      <div className="text-xs text-slate-400">{lead.source}</div>
-                      <div className="text-[10px] text-slate-300">{timeAgo(lead.createdAt ?? lead.created_at ?? "")}</div>
-                      <ArrowRight size={13} className="text-slate-200 group-hover:text-blue-500 transition-colors" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                            <span className="font-semibold text-slate-900">{lead.name}</span>
+                            <Badge variant="outline" className="text-[10px]">{lead.niche}</Badge>
+                            {lead.subniche && <Badge variant="secondary" className="text-[10px]">{lead.subniche}</Badge>}
+                            <span className={`inline-flex items-center rounded-full px-2 py-0 text-[10px] font-medium border ${getTemperatureColor(lead.temperature)}`}>
+                              {getTemperatureLabel(lead.temperature)}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-2">
+                            <span className="flex items-center gap-1"><MapPin size={10} />{lead.city}, {lead.state}</span>
+                            {lead.website && <span className="flex items-center gap-1 text-blue-500"><Globe size={10} />Site</span>}
+                            {lead.instagram && <span className="flex items-center gap-1 text-pink-500"><AtSign size={10} />{lead.instagram}</span>}
+                            {lead.email && <span className="flex items-center gap-1"><Mail size={10} />{lead.email}</span>}
+                            {lead.phone && <span className="flex items-center gap-1"><Phone size={10} />{lead.phone}</span>}
+                          </div>
+                          {lead.opportunity && <p className="text-xs text-slate-500 line-clamp-1">{lead.opportunity}</p>}
+                          {lead.termsFound && lead.termsFound.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {lead.termsFound.slice(0, 4).map((t) => (
+                                <span key={t} className="inline-flex items-center rounded-full bg-green-50 border border-green-100 px-1.5 py-0 text-[10px] text-green-700">{t}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium ${getStatusColor(lead.status)}`}>
+                            {getStatusLabel(lead.status)}
+                          </span>
+                          <div className="text-xs text-slate-400">{lead.source}</div>
+                          <div className="text-[10px] text-slate-300">{timeAgo(lead.createdAt ?? lead.created_at ?? "")}</div>
+                          <ArrowRight size={13} className="text-slate-200 group-hover:text-blue-500 transition-colors" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
