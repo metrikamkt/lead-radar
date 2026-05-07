@@ -138,6 +138,14 @@ export async function POST(req: NextRequest) {
   }
 
   const gData = await response.json();
+
+  if (gData.status && gData.status !== "OK" && gData.status !== "ZERO_RESULTS") {
+    return NextResponse.json(
+      { error: `Google Maps API erro: ${gData.status} — ${gData.error_message ?? "sem detalhes"}` },
+      { status: 400 }
+    );
+  }
+
   const places: PlaceResult[] = (gData.results ?? []).slice(0, maxLeads ?? 20);
 
   const savedLeads = [];
